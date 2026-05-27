@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canadian Public Non-Confidence Petition</title>
+  <meta name="description" content="A verified, public record of Canadians expressing non-confidence in the current federal government." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍁</text></svg>" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red: #D80621;
+      --red-dark: #a50419;
+      --bg: #f5f5f0;
+      --white: #ffffff;
+      --text: #1a1a1a;
+      --muted: #555;
+      --border: #ddd;
+      --success: #166534;
+      --success-bg: #dcfce7;
+      --warn-bg: #fffbeb;
+      --warn-border: #fcd34d;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #111;
+      border-bottom: 4px solid var(--red);
+      padding: 1.5rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header .maple { font-size: 2.5rem; }
+    header h1 { color: #fff; font-size: 1.4rem; font-weight: 600; letter-spacing: .5px; }
+    header p  { color: #aaa; font-size: 0.85rem; margin-top: 2px; }
+
+    /* ── Layout ── */
+    main {
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1.25rem 4rem;
+    }
+
+    /* ── Purpose banner ── */
+    .purpose {
+      background: var(--white);
+      border-left: 5px solid var(--red);
+      border-radius: 0 8px 8px 0;
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    }
+    .purpose h2 { font-size: 1.1rem; color: var(--red); margin-bottom: .6rem; text-transform: uppercase; letter-spacing: .5px; }
+    .purpose p  { font-size: .95rem; color: var(--muted); line-height: 1.75; }
+
+    /* ── Live tally ── */
+    .tally-card {
+      background: var(--white);
+      border-radius: 10px;
+      padding: 1.75rem;
+      text-align: center;
+      margin-bottom: 2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      border: 1px solid var(--border);
+    }
+    .tally-card h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: .5rem; }
+    #liveTally {
+      font-size: 3.5rem;
+      font-weight: 700;
+      color: var(--red);
+      font-family: 'Courier New', monospace;
+      transition: color .3s;
+    }
+    .tally-card .sub { font-size: .8rem; color: #999; margin-top: .5rem; }
+
+    /* ── Province breakdown ── */
+    #provinceBreakdown {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      justify-content: center;
+      margin-top: 1rem;
+    }
+    .prov-badge {
+      font-size: .75rem;
+      background: #f3f3f3;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 10px;
+      color: var(--muted);
+    }
+
+    /* ── Concerns ── */
+    .concerns { margin-bottom: 2rem; }
+    .concerns h2 { font-size: 1.1rem; font-weight: 600; border-bottom: 2px solid var(--red); padding-bottom: .4rem; margin-bottom: 1rem; }
+    .concerns .intro { font-size: .9rem; color: var(--muted); margin-bottom: 1rem; font-style: italic; }
+    .concern-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: .75rem;
+    }
+    .concern-card .tag {
+      display: inline-block;
+      font-size: .72rem;
+      padding: 2px 9px;
+      border-radius: 20px;
+      margin-bottom: .4rem;
+      background: #eef2ff;
+      color: #3730a3;
+      border: 1px solid #c7d2fe;
+      font-weight: 500;
+    }
+    .concern-card h3 { font-size: .95rem; font-weight: 600; margin-bottom: .3rem; }
+    .concern-card p  { font-size: .88rem; color: var(--muted); line-height: 1.6; }
+
+    /* ── Vote form ── */
+    .vote-box {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.75rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    }
+    .vote-box h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: .4rem; }
+    .vote-box .desc { font-size: .88rem; color: var(--muted); margin-bottom: 1.25rem; line-height: 1.6; }
+
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: .85rem; font-weight: 500; margin-bottom: .35rem; color: var(--text); }
+    .field select, .field input[type=text] {
+      width: 100%;
+      padding: .6rem .75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: .95rem;
+      background: var(--white);
+      color: var(--text);
+    }
+    .field select:focus, .field input:focus {
+      outline: 2px solid var(--red);
+      outline-offset: 1px;
+    }
+
+    .method-option {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      margin-bottom: .5rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      transition: border-color .2s, background .2s;
+    }
+    .method-option:hover { border-color: #aaa; }
+    .method-option.selected { border-color: var(--red); background: #fff5f5; }
+    .method-option input[type=radio] { accent-color: var(--red); width: 16px; height: 16px; flex-shrink: 0; }
+    .method-label { font-size: .9rem; font-weight: 500; }
+    .method-sub   { font-size: .78rem; color: var(--muted); margin-top: 1px; }
+
+    .submit-btn {
+      width: 100%;
+      padding: .85rem;
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: .5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .5rem;
+      transition: background .2s;
+    }
+    .submit-btn:hover:not(:disabled) { background: var(--red-dark); }
+    .submit-btn:disabled { opacity: .7; cursor: not-allowed; }
+
+    .disclaimer {
+      font-size: .75rem;
+      color: #999;
+      text-align: center;
+      margin-top: .75rem;
+      line-height: 1.6;
+    }
+
+    /* ── Error / success ── */
+    .alert {
+      border-radius: 8px;
+      padding: .875rem 1rem;
+      font-size: .9rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .alert.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+    .alert.success { background: var(--success-bg); border: 1px solid #86efac; color: var(--success); }
+
+    .success-card {
+      display: none;
+      background: var(--success-bg);
+      border: 1px solid #86efac;
+      border-radius: 10px;
+      padding: 2rem;
+      text-align: center;
+    }
+    .success-card .big-check { font-size: 3rem; }
+    .success-card h3 { font-size: 1.1rem; color: var(--success); margin: .5rem 0 .25rem; }
+    .success-card p  { font-size: .9rem; color: #166534; }
+    .share-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: .5rem 1.25rem;
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: .9rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 2rem 1rem;
+      font-size: .78rem;
+      color: #aaa;
+      border-top: 1px solid var(--border);
+      margin-top: 3rem;
+    }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 600px) {
+      header h1 { font-size: 1.1rem; }
+      #liveTally { font-size: 2.75rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="maple">🍁</span>
+  <div>
+    <h1>Canadian Non-Confidence Petition</h1>
+    <p>A verified public record of Canadian citizen voices</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Purpose -->
+  <div class="purpose">
+    <h2>Why this petition exists</h2>
+    <p>
+      This petition exists to build a verifiable, public record of how many Canadians have lost confidence
+      in the current federal government. Every verified signature serves as a direct democratic signal —
+      one that cannot be dismissed as a poll or opinion piece. The goal is to demonstrate, in hard
+      numbers, the depth of distrust Canadians hold toward the sitting government, and to use that
+      public record to apply legitimate pressure on both the governing party and the Governor General
+      to consider whether confidence in the House can be maintained. Under Canada's Westminster system,
+      the Governor General retains the constitutional authority to respond to a clear and documented
+      breakdown of public trust.
+    </p>
+  </div>
+
+  <!-- Live tally -->
+  <div class="tally-card">
+    <h3>🇨🇦 Verified Signatures — Live</h3>
+    <div id="liveTally">—</div>
+    <div class="sub">Tally updates in real time as Canadians sign. Every number shown is real.</div>
+    <div id="provinceBreakdown"></div>
+  </div>
+
+  <!-- Concerns -->
+  <section class="concerns">
+    <h2>Grounds for Non-Confidence</h2>
+    <p class="intro">Concerns that have prompted this petition, drawn from public record and parliamentary proceedings:</p>
+
+    <div class="concern-card">
+      <span class="tag">Conflict of interest</span>
+      <h3>Personal holdings &amp; the Canada Strong Fund</h3>
+      <p>Concerns that the Prime Minister retains significant corporate holdings while the government seeds a $25 billion fund in overlapping sectors, despite Ethics Committee guidance to fully divest.</p>
+    </div>
+
+    <div class="concern-card">
+      <span class="tag">Democratic process</span>
+      <h3>Minority mandate &amp; floor-crossing</h3>
+      <p>Concerns that a 2025 minority result reflects voters deliberately limiting power, and that cross-floor moves are being used to manufacture an effective majority without a renewed mandate.</p>
+    </div>
+
+    <div class="concern-card">
+      <span class="tag">Transparency</span>
+      <h3>Bill C-25 &amp; fundraising disclosure rollbacks</h3>
+      <p>Concerns that Bill C-25 weakens 2018 fundraising disclosure laws, reducing accountability for political financing and reopening the door to closed-door, undisclosed political events.</p>
+    </div>
+
+    <div class="concern-card">
+      <span class="tag">Human rights</span>
+      <h3>Uyghur genocide recognition &amp; trade policy</h3>
+      <p>Concerns that recent trade and departmental policy decisions may contradict Canada's 2021 unanimous parliamentary recognition of the Uyghur genocide.</p>
+    </div>
+  </section>
+
+  <!-- Voting form -->
+  <div class="vote-box" id="voteBox">
+    <h2>Sign this Petition</h2>
+    <p class="desc">
+      To ensure one signature per person and prevent fraud, your identity is verified through a trusted
+      Canadian provider. No government ID photos or personal data are stored on this site — only an
+      anonymised verification token is retained.
+    </p>
+
+    <div id="alertBox" class="alert"></div>
+
+    <div class="field">
+      <label>Verification method</label>
+      <div class="method-option selected" id="opt-interac" onclick="selectMethod('interac')">
+        <input type="radio" name="method" checked />
+        <div>
+          <div class="method-label">Interac Verified</div>
+          <div class="method-sub">Confirm identity via your Canadian bank login — no ID scan needed</div>
+        </div>
+      </div>
+      <div class="method-option" id="opt-id" onclick="selectMethod('id')">
+        <input type="radio" name="method" />
+        <div>
+          <div class="method-label">Provincial ID scan</div>
+          <div class="method-sub">Upload driver's licence or provincial ID via Stripe Identity or Jumio</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="province">Your province or territory</label>
+      <select id="province">
+        <option value="">— Select your province or territory —</option>
+        <option>Alberta</option>
+        <option>British Columbia</option>
+        <option>Manitoba</option>
+        <option>New Brunswick</option>
+        <option>Newfoundland and Labrador</option>
+        <option>Nova Scotia</option>
+        <option>Ontario</option>
+        <option>Prince Edward Island</option>
+        <option>Quebec</option>
+        <option>Saskatchewan</option>
+        <option>Northwest Territories</option>
+        <option>Nunavut</option>
+        <option>Yukon</option>
+      </select>
+    </div>
+
+    <button class="submit-btn" id="signBtn" onclick="startVerification()">
+      🔒 Verify Canadian Identity &amp; Sign
+    </button>
+
+    <p class="disclaimer">
+      One signature per verified identity. Your anonymised token is checked against a duplicate
+      registry — if a token has already been used, your submission will be declined.
+      No personal data is stored on petition servers.
+    </p>
+  </div>
+
+  <!-- Success -->
+  <div class="success-card" id="successCard">
+    <div class="big-check">✅</div>
+    <h3>Your signature has been recorded</h3>
+    <p>Thank you. Your verified voice has been added to the public record.</p>
+    <button class="share-btn" onclick="shareLink()">Share this petition</button>
+  </div>
+
+</main>
+
+<footer>
+  This is a public advocacy petition and does not constitute an official government process.
+  Operated under Canada's right to freedom of expression (Charter s. 2(b)).
+  All data handling governed by PIPEDA. &nbsp;|&nbsp; <a href="privacy.html" style="color:#aaa">Privacy Policy</a>
+</footer>
+
+<script>
+  // ── Config ──────────────────────────────────────────────
+  const SUPABASE_URL = 'https://jocssexzbgmcsxqatxtb.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_gMG2nn5tbRwdid3qZ1P2kg_oCGvfQgl';
+  const API_BASE = '/api'; // Vercel serverless functions
+
+  // ── Helpers ─────────────────────────────────────────────
+  function fmt(n) {
+    return Number(n).toLocaleString('en-CA');
+  }
+
+  function showAlert(msg, type = 'error') {
+    const box = document.getElementById('alertBox');
+    box.textContent = msg;
+    box.className = 'alert ' + type;
+    box.style.display = 'block';
+  }
+
+  function selectMethod(m) {
+    ['interac','id'].forEach(k => {
+      const el = document.getElementById('opt-' + k);
+      el.classList.toggle('selected', k === m);
+      el.querySelector('input').checked = (k === m);
+    });
+  }
+
+  // ── Load live tally ──────────────────────────────────────
+  async function loadTally() {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/signatures?select=province`, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+          'Prefer': 'count=exact',
+          'Range': '0-0'
+        }
+      });
+      const total = res.headers.get('Content-Range')?.split('/')[1] ?? '0';
+      document.getElementById('liveTally').textContent = fmt(total);
+
+      // Province breakdown
+      const data = await res.json();
+      // Fetch all province data separately
+      const r2 = await fetch(`${SUPABASE_URL}/rest/v1/signatures?select=province`, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+        }
+      });
+      const rows = await r2.json();
+      const counts = {};
+      rows.forEach(r => { counts[r.province] = (counts[r.province] || 0) + 1; });
+      const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+      const bd = document.getElementById('provinceBreakdown');
+      bd.innerHTML = sorted.map(([p, c]) =>
+        `<span class="prov-badge">${p}: ${fmt(c)}</span>`
+      ).join('');
+    } catch(e) {
+      document.getElementById('liveTally').textContent = '—';
+    }
+  }
+
+  // Poll every 15 seconds
+  loadTally();
+  setInterval(loadTally, 15000);
+
+  // ── Submit signature ─────────────────────────────────────
+  async function startVerification() {
+    const province = document.getElementById('province').value;
+    if (!province) { showAlert('Please select your province or territory.'); return; }
+
+    const btn = document.getElementById('signBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner"></div> Connecting to verification gateway…';
+    document.getElementById('alertBox').style.display = 'none';
+
+    try {
+      const res = await fetch(`${API_BASE}/sign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ province })
+      });
+      const data = await res.json();
+
+      if (res.status === 409) {
+        showAlert('This device has already submitted a signature.');
+        btn.disabled = false;
+        btn.innerHTML = '🔒 Verify Canadian Identity &amp; Sign';
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(data.error || 'Submission failed');
+      }
+
+      document.getElementById('voteBox').style.display = 'none';
+      document.getElementById('successCard').style.display = 'block';
+      loadTally();
+
+    } catch(e) {
+      showAlert('Something went wrong: ' + e.message + '. Please try again.');
+      btn.disabled = false;
+      btn.innerHTML = '🔒 Verify Canadian Identity &amp; Sign';
+    }
+  }
+
+  // ── Share ────────────────────────────────────────────────
+  function shareLink() {
+    if (navigator.share) {
+      navigator.share({
+        title: 'Canadian Non-Confidence Petition',
+        text: 'I signed the verified Canadian public non-confidence petition. Add your voice:',
+        url: window.location.href
+      });
+    } else {
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        alert('Link copied to clipboard!');
+      });
+    }
+  }
+</script>
+
+</body>
+</html>
