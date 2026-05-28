@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verifying — Canadian Petition</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f5f5f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 4px 20px rgba(0,0,0,.1);
+    }
+    .maple { font-size: 3rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.3rem; color: #1a1a1a; margin-bottom: .5rem; }
+    p  { font-size: .95rem; color: #555; line-height: 1.6; }
+    .spinner-wrap { margin: 1.5rem auto; }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid #eee;
+      border-top-color: #D80621;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      margin: 0 auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status {
+      margin-top: 1.5rem;
+      padding: .875rem 1rem;
+      border-radius: 8px;
+      font-size: .95rem;
+      display: none;
+    }
+    .status.success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .status.error   { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+    .back-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: .6rem 1.5rem;
+      background: #D80621;
+      color: #fff;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: .9rem;
+      font-weight: 500;
+    }
+    .back-btn:hover { background: #a50419; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="maple">🍁</div>
+  <h1 id="title">Completing Verification…</h1>
+  <p id="subtitle">Please wait while we confirm your identity with Interac and record your signature.</p>
+
+  <div class="spinner-wrap" id="spinnerWrap">
+    <div class="spinner"></div>
+  </div>
+
+  <div class="status" id="statusBox"></div>
+</div>
+
+<script>
+  (async () => {
+    const params  = new URLSearchParams(window.location.search);
+    const code    = params.get('code');
+    const state   = params.get('state');
+    const errorP  = params.get('error');
+    const errorDesc = params.get('error_description');
+
+    const title    = document.getElementById('title');
+    const subtitle = document.getElementById('subtitle');
+    const spinner  = document.getElementById('spinnerWrap');
+    const statusBox = document.getElementById('statusBox');
+
+    function showError(msg) {
+      spinner.style.display = 'none';
+      title.textContent = 'Verification Failed';
+      subtitle.textContent = '';
+      statusBox.className = 'status error';
+      statusBox.innerHTML = msg + '<br><br><a class="back-btn" href="/">Try Again</a>';
+      statusBox.style.display = 'block';
+    }
+
+    function showSuccess() {
+      spinner.style.display = 'none';
+      title.textContent = 'Signature Recorded ✅';
+      subtitle.textContent = '';
+      statusBox.className = 'status success';
+      statusBox.innerHTML = 'Your verified Canadian identity has been confirmed and your signature has been added to the public record. Thank you.<br><br><a class="back-btn" href="/">Back to Petition</a>';
+      statusBox.style.display = 'block';
+    }
+
+    // Handle error redirect from Interac
+    if (errorP) {
+      showError(`Interac returned an error: <strong>${errorP}</strong>${errorDesc ? ` — ${errorDesc}` : ''}`);
+      return;
+    }
+
+    if (!code || !state) {
+      showError('Missing verification parameters. Please start the process again from the petition page.');
+      return;
+    }
+
+    // Exchange the code for a verified identity token and record the vote
+    try {
+      const res = await fetch('/api/interac/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, state }),
+      });
+
+      const data = await res.json();
+
+      if (res.status === 409) {
+        spinner.style.display = 'none';
+        title.textContent = 'Already Signed';
+        statusBox.className = 'status error';
+        statusBox.innerHTML = 'Your Interac identity has already been used to sign this petition. Only one signature per verified person is allowed.<br><br><a class="back-btn" href="/">Back to Petition</a>';
+        statusBox.style.display = 'block';
+        return;
+      }
+
+      if (!res.ok) {
+        showError(data.error ?? 'An unexpected error occurred. Please try again.');
+        return;
+      }
+
+      showSuccess();
+    } catch (e) {
+      showError('Network error — please check your connection and try again.');
+    }
+  })();
+</script>
+</body>
+</html>
