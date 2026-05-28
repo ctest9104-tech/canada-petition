@@ -473,7 +473,7 @@
 
     try {
       // Ask our backend to build the signed JWT authorization request
-      const res = await fetch(`/api/interac/start?province=${encodeURIComponent(province)}`);
+      const res = await fetch(`/api/interac-start?province=${encodeURIComponent(province)}`);
       const data = await res.json();
 
       if (!res.ok) {
