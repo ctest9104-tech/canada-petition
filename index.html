@@ -327,33 +327,29 @@
   <div class="vote-box" id="voteBox">
     <h2>Sign this Petition</h2>
     <p class="desc">
-      To ensure one signature per person and prevent fraud, your identity is verified through a trusted
-      Canadian provider. No government ID photos or personal data are stored on this site — only an
-      anonymised verification token is retained.
+      Your identity is verified through <strong>Interac Verified</strong> — Canada's trusted bank-based
+      identity network. You will be briefly redirected to your bank's login page, then returned here
+      automatically. No personal data, ID photos, or banking information are stored on this site.
+      Only a one-way cryptographic hash of your unique Interac identifier is retained.
     </p>
 
     <div id="alertBox" class="alert"></div>
 
-    <div class="field">
-      <label>Verification method</label>
-      <div class="method-option selected" id="opt-interac" onclick="selectMethod('interac')">
-        <input type="radio" name="method" checked />
-        <div>
-          <div class="method-label">Interac Verified</div>
-          <div class="method-sub">Confirm identity via your Canadian bank login — no ID scan needed</div>
-        </div>
+    <!-- Interac badge -->
+    <div style="display:flex;align-items:center;gap:.75rem;padding:.875rem 1rem;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:1rem;">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="28" height="28" rx="6" fill="#FFCD00"/>
+        <text x="14" y="20" font-size="14" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" fill="#1a1a1a">i</text>
+      </svg>
+      <div>
+        <div style="font-size:.9rem;font-weight:600;color:#1a1a1a;">Interac Verified™</div>
+        <div style="font-size:.78rem;color:#555;">Powered by your Canadian financial institution</div>
       </div>
-      <div class="method-option" id="opt-id" onclick="selectMethod('id')">
-        <input type="radio" name="method" />
-        <div>
-          <div class="method-label">Provincial ID scan</div>
-          <div class="method-sub">Upload driver's licence or provincial ID via Stripe Identity or Jumio</div>
-        </div>
-      </div>
+      <div style="margin-left:auto;font-size:.75rem;color:#16a34a;font-weight:500;">🔒 Secure</div>
     </div>
 
     <div class="field">
-      <label for="province">Your province or territory</label>
+      <label for="province">Your province or territory <span style="color:#D80621">*</span></label>
       <select id="province">
         <option value="">— Select your province or territory —</option>
         <option>Alberta</option>
@@ -373,12 +369,12 @@
     </div>
 
     <button class="submit-btn" id="signBtn" onclick="startVerification()">
-      🔒 Verify Canadian Identity &amp; Sign
+      🏦 Sign with Interac Verified
     </button>
 
     <p class="disclaimer">
-      One signature per verified identity. Your anonymised token is checked against a duplicate
-      registry — if a token has already been used, your submission will be declined.
+      You will be redirected to Interac to verify your identity via your Canadian bank.
+      One signature per verified person — enforced by Interac's unique user identifier.
       No personal data is stored on petition servers.
     </p>
   </div>
@@ -465,42 +461,33 @@
   loadTally();
   setInterval(loadTally, 15000);
 
-  // ── Submit signature ─────────────────────────────────────
+  // ── Start Interac OIDC flow ───────────────────────────────
   async function startVerification() {
     const province = document.getElementById('province').value;
     if (!province) { showAlert('Please select your province or territory.'); return; }
 
     const btn = document.getElementById('signBtn');
     btn.disabled = true;
-    btn.innerHTML = '<div class="spinner"></div> Connecting to verification gateway…';
+    btn.innerHTML = '<div class="spinner"></div> Connecting to Interac…';
     document.getElementById('alertBox').style.display = 'none';
 
     try {
-      const res = await fetch(`${API_BASE}/sign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ province })
-      });
+      // Ask our backend to build the signed JWT authorization request
+      const res = await fetch(`/api/interac/start?province=${encodeURIComponent(province)}`);
       const data = await res.json();
 
-      if (res.status === 409) {
-        showAlert('This device has already submitted a signature.');
-        btn.disabled = false;
-        btn.innerHTML = '🔒 Verify Canadian Identity &amp; Sign';
-        return;
-      }
       if (!res.ok) {
-        throw new Error(data.error || 'Submission failed');
+        throw new Error(data.error || 'Could not start verification');
       }
 
-      document.getElementById('voteBox').style.display = 'none';
-      document.getElementById('successCard').style.display = 'block';
-      loadTally();
+      // Redirect the user to Interac Hub — they will authenticate with their bank
+      // and Interac will redirect them back to /callback with ?code=...&state=...
+      window.location.href = data.authUrl;
 
     } catch(e) {
-      showAlert('Something went wrong: ' + e.message + '. Please try again.');
+      showAlert('Could not connect to Interac: ' + e.message + '. Please try again.');
       btn.disabled = false;
-      btn.innerHTML = '🔒 Verify Canadian Identity &amp; Sign';
+      btn.innerHTML = '🏦 Sign with Interac Verified';
     }
   }
 
