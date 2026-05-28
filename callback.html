@@ -117,7 +117,7 @@
 
     // Exchange the code for a verified identity token and record the vote
     try {
-      const res = await fetch('/api/interac/exchange', {
+      const res = await fetch('/api/interac-exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, state }),
