@@ -1,154 +1,147 @@
-// POST /api/interac/exchange
-// Called by callback.html after Interac redirects back with ?code= & ?state=
-// 1. Validates state against Supabase session
-// 2. Exchanges code for access_token using a signed client_assertion
-// 3. Fetches userinfo to get the unique `sub` (permanent user identifier from Interac)
-// 4. Hashes the sub and records the vote — duplicate sub = 409
+// POST /api/interac-exchange
+// Called by the frontend after Interac redirects back to /callback.
+// Exchanges the auth code for tokens, hashes the sub, records the vote.
 
 import { createClient } from '@supabase/supabase-js';
 import { SignJWT, importPKCS8 } from 'jose';
 import crypto from 'crypto';
 
-const INTERAC_ISSUER      = 'https://gateway-portal.hub-verify.innovation.interac.ca';
-const INTERAC_TOKEN_URL   = `${INTERAC_ISSUER}/oauth2/token`;
-const INTERAC_USERINFO_URL = `${INTERAC_ISSUER}/userinfo`;
-const CLIENT_ID           = '12011230-9c6c-42e3-9834-1bf2d8ee2a91';
-const KID                 = 'petition-rp-2026';
+const INTERAC_ISSUER    = 'https://gateway-portal.hub-verify.innovation.interac.ca';
+const TOKEN_ENDPOINT    = `${INTERAC_ISSUER}/oauth2/token`;
+const USERINFO_ENDPOINT = `${INTERAC_ISSUER}/userinfo`;
+const CLIENT_ID         = '12011230-9c6c-42e3-9834-1bf2d8ee2a91';
+const KID               = 'petition-rp-2026';
+
+function loadPrivateKeyPem() {
+  const b64 = process.env.INTERAC_PRIVATE_KEY_B64;
+  if (!b64) throw new Error('INTERAC_PRIVATE_KEY_B64 not set');
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
+// HMAC-SHA256 is stronger than plain SHA256+salt concatenation.
+// The HASH_SALT makes the hash useless to anyone who steals the DB —
+// they cannot reverse it without the salt.
+function hashVoterSub(sub) {
+  const salt = process.env.HASH_SALT;
+  if (!salt) throw new Error('HASH_SALT env var not set');
+  return crypto.createHmac('sha256', salt).update(sub).digest('hex');
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const { code, state } = req.body ?? {};
-  if (!code || !state) {
-    return res.status(400).json({ error: 'code and state are required' });
-  }
-
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
-  );
-
-  // 1. Retrieve and validate session
-  const { data: session, error: sessionErr } = await supabase
-    .from('pending_sessions')
-    .select('*')
-    .eq('state', state)
-    .single();
-
-  if (sessionErr || !session) {
-    return res.status(400).json({ error: 'Invalid or expired state. Please restart the verification.' });
-  }
-
-  // Check session not older than 10 minutes
-  if (Date.now() - new Date(session.created_at).getTime() > 10 * 60 * 1000) {
-    await supabase.from('pending_sessions').delete().eq('state', state);
-    return res.status(400).json({ error: 'Verification session expired. Please try again.' });
-  }
-
-  // Delete session immediately (one-use)
-  await supabase.from('pending_sessions').delete().eq('state', state);
-
-  // Derive redirect_uri (must match what was sent in start.js)
-  const host = req.headers['x-forwarded-host'] ?? req.headers.host ?? 'localhost:3000';
-  const proto = req.headers['x-forwarded-proto'] ?? 'https';
-  const redirectUri = `${proto}://${host}/callback`;
-
-  // Load private key
-  const privatePem = (process.env.INTERAC_PRIVATE_KEY ?? '').replace(/\\n/g, '\n');
-  if (!privatePem) {
-    return res.status(500).json({ error: 'INTERAC_PRIVATE_KEY env var not set' });
-  }
-  const privateKey = await importPKCS8(privatePem, 'RS256');
-
-  // 2. Build signed client_assertion JWT (required by Interac token endpoint)
-  const now = Math.floor(Date.now() / 1000);
-  const clientAssertion = await new SignJWT({
-    iss: CLIENT_ID,
-    sub: CLIENT_ID,
-    aud: INTERAC_TOKEN_URL,
-    jti: crypto.randomUUID(),
-    iat: now,
-    exp: now + 300,
-  })
-    .setProtectedHeader({ alg: 'RS256', kid: KID })
-    .sign(privateKey);
-
-  // 3. Exchange code for access_token
-  const tokenParams = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code,
-    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-    client_assertion: clientAssertion,
-    client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
-    code_verifier: session.code_verifier,
-  });
-
-  let tokenData;
   try {
-    const tokenRes = await fetch(INTERAC_TOKEN_URL, {
+    if (req.method !== 'POST')
+      return res.status(405).json({ error: 'Method not allowed' });
+
+    const { code, state } = req.body ?? {};
+    if (!code || !state)
+      return res.status(400).json({ error: 'Missing code or state' });
+
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY   // service role — bypasses RLS
+    );
+
+    // ── 1. Validate state, retrieve session ──────────────────────────
+    const { data: sessions, error: fetchErr } = await supabase
+      .from('pending_sessions')
+      .select('province, code_verifier, nonce')
+      .eq('state', state)
+      .limit(1);
+
+    if (fetchErr || !sessions?.length)
+      return res.status(400).json({ error: 'Invalid or expired session. Please start over.' });
+
+    const { province, code_verifier } = sessions[0];
+
+    // Delete immediately — one-time use
+    await supabase.from('pending_sessions').delete().eq('state', state);
+
+    const host        = req.headers['x-forwarded-host'] ?? req.headers.host ?? 'localhost:3000';
+    const proto       = req.headers['x-forwarded-proto'] ?? 'https';
+    const redirectUri = `${proto}://${host}/callback`;
+
+    // ── 2. Build signed client_assertion for the token endpoint ──────
+    const pem        = loadPrivateKeyPem();
+    const privateKey = await importPKCS8(pem, 'RS256');
+    const now        = Math.floor(Date.now() / 1000);
+
+    const clientAssertion = await new SignJWT({
+      iss: CLIENT_ID,
+      sub: CLIENT_ID,
+      aud: TOKEN_ENDPOINT,   // aud = token_endpoint per Interac docs
+      exp: now + 300,
+      iat: now,
+      jti: crypto.randomUUID(),
+    })
+      .setProtectedHeader({ alg: 'RS256', kid: KID })
+      .sign(privateKey);
+
+    // ── 3. Exchange auth code → access token ─────────────────────────
+    const tokenRes = await fetch(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: tokenParams.toString(),
+      body: new URLSearchParams({
+        grant_type:            'authorization_code',
+        code,
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion:      clientAssertion,
+        client_id:             CLIENT_ID,
+        redirect_uri:          redirectUri,
+        code_verifier,         // PKCE verifier from session
+      }).toString(),
     });
-    tokenData = await tokenRes.json();
+
     if (!tokenRes.ok) {
-      console.error('Token error:', tokenData);
-      return res.status(502).json({ error: 'Token exchange failed', detail: tokenData });
+      const body = await tokenRes.text();
+      console.error('[exchange] Token error:', body);
+      return res.status(502).json({ error: 'Verification failed at token step', detail: body });
     }
-  } catch (e) {
-    console.error('Token fetch error:', e);
-    return res.status(502).json({ error: 'Could not reach Interac token endpoint' });
-  }
 
-  // 4. Fetch userinfo to get the user's unique sub
-  let userInfo;
-  try {
-    const userRes = await fetch(INTERAC_USERINFO_URL, {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    const { access_token } = await tokenRes.json();
+
+    // ── 4. Fetch verified user claims ────────────────────────────────
+    const userinfoRes = await fetch(USERINFO_ENDPOINT, {
+      headers: { Authorization: `Bearer ${access_token}` },
     });
-    userInfo = await userRes.json();
-    if (!userRes.ok) {
-      console.error('UserInfo error:', userInfo);
-      return res.status(502).json({ error: 'Could not retrieve user identity' });
+
+    if (!userinfoRes.ok) {
+      const body = await userinfoRes.text();
+      console.error('[exchange] Userinfo error:', body);
+      return res.status(502).json({ error: 'Verification failed at identity step', detail: body });
     }
-  } catch (e) {
-    console.error('UserInfo fetch error:', e);
-    return res.status(502).json({ error: 'Could not reach Interac userinfo endpoint' });
+
+    const { sub } = await userinfoRes.json();
+    if (!sub) return res.status(400).json({ error: 'No identity returned from Interac' });
+
+    // ── 5. Hash the sub — never store it raw ─────────────────────────
+    // HMAC-SHA256(HASH_SALT, sub)
+    // Same person → same hash every time (deterministic)
+    // Different salt → different hash (salt rotation invalidates all)
+    const voterHash = hashVoterSub(sub);
+
+    // ── 6. Insert — unique constraint blocks double votes ─────────────
+    const { error: insertError } = await supabase
+      .from('signatures')
+      .insert({ voter_hash: voterHash, province });
+
+    if (insertError) {
+      // Postgres error 23505 = unique_violation
+      if (insertError.code === '23505') {
+        return res.status(409).json({
+          error: 'already_voted',
+          message: 'Your identity has already been used to sign this petition.',
+        });
+      }
+      console.error('[exchange] Insert error:', insertError);
+      return res.status(500).json({ error: 'Could not record vote' });
+    }
+
+    // vote_counts is updated automatically by the DB trigger
+    return res.status(200).json({ success: true, province });
+
+  } catch (err) {
+    console.error('[interac-exchange] Unhandled error:', err);
+    return res.status(500).json({ error: 'Internal server error', detail: err.message });
   }
-
-  if (!userInfo.sub) {
-    return res.status(502).json({ error: 'No subject identifier returned from Interac' });
-  }
-
-  // 5. Hash the sub — we never store raw PII, only a one-way hash
-  const token = crypto.createHash('sha256')
-    .update(`interac::${userInfo.sub}`)
-    .digest('hex');
-
-  // 6. Record the vote (UNIQUE constraint catches duplicates)
-  const { error: insertError } = await supabase
-    .from('signatures')
-    .insert({ verification_token: token, province: session.province });
-
-  if (insertError?.code === '23505') {
-    return res.status(409).json({ error: 'You have already signed this petition.' });
-  }
-  if (insertError) {
-    console.error('Insert error:', insertError);
-    return res.status(500).json({ error: 'Database error — please try again.' });
-  }
-
-  // Return minimal info — no PII
-  return res.status(200).json({
-    success: true,
-    source: userInfo.source ?? 'verified',
-  });
 }
