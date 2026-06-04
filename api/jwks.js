@@ -1,22 +1,33 @@
-// GET /api/jwks
-// Interac Hub fetches this to validate our signed request objects and client assertions.
-// The public key values here MUST match the private key in INTERAC_PRIVATE_KEY env var.
+import crypto from 'crypto';
 
-export default function handler(req, res) {
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
+const KID = 'petition-rp-2026';
+
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const b64 = process.env.INTERAC_PRIVATE_KEY_B64;
+    if (!b64) return res.status(500).json({ error: 'INTERAC_PRIVATE_KEY_B64 not set' });
 
-  return res.status(200).json({
-    keys: [
-      {
-        kty: 'RSA',
+    const pem = Buffer.from(b64, 'base64').toString('utf8');
+
+    // Derive the public key directly from the private key — always in sync
+    const privateKeyObj = crypto.createPrivateKey(pem);
+    const publicKeyObj  = crypto.createPublicKey(privateKeyObj);
+    const jwk           = publicKeyObj.export({ format: 'jwk' });
+
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.status(200).json({
+      keys: [{
+        kty: jwk.kty,
         use: 'sig',
         alg: 'RS256',
-        kid: 'petition-rp-2026',
-        n: 'oBafeiLj41Cx5bIV4FKhwMj_CEACg8NKBvWsNFufG2vePbaDJHlJGEUjYgIG7uJcVQBRBhi1e2ZK1VBGG7Fmc1l3zNnME4ofl5Wuky8tTlMxWKj6Y1DvQvrYgCJ3Wz6yWrU7qh6RphGcEVHWPjW1JEwwvXd_BDocVYFkrGJXS7lB5UMoJ1ZLF4lDezYErWySyHGk3b-ITMICYy1GRTu4fLDrt4Z6CEjXcxfWsi0R-gGB2Ts6s3KxqRjCFuiwurE6GtbxEROue9NpwvuC2rnF-9ciqCF5vsDCep8ymU83qo1dDPFaPhJQNtRqlvCeKMrypUbyzNLoa6ACayVnAFay3w',
-        e: 'AQAB'
-      }
-    ]
-  });
+        kid: KID,
+        n:   jwk.n,
+        e:   jwk.e,
+      }],
+    });
+  } catch (err) {
+    console.error('[jwks] Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 }
