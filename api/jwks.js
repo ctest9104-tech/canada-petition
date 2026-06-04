@@ -1,33 +1,23 @@
-import crypto from 'crypto';
+// GET /api/jwks
+// Serves our RSA public key so Interac Hub can verify our signed JWTs.
+// This key MUST match the INTERAC_PRIVATE_KEY environment variable in Vercel.
+// Key pair generated: 2026-06-04
 
-const KID = 'petition-rp-2026';
-
-export default async function handler(req, res) {
+export default function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  try {
-    const b64 = process.env.INTERAC_PRIVATE_KEY_B64;
-    if (!b64) return res.status(500).json({ error: 'INTERAC_PRIVATE_KEY_B64 not set' });
 
-    const pem = Buffer.from(b64, 'base64').toString('utf8');
-
-    // Derive the public key directly from the private key — always in sync
-    const privateKeyObj = crypto.createPrivateKey(pem);
-    const publicKeyObj  = crypto.createPublicKey(privateKeyObj);
-    const jwk           = publicKeyObj.export({ format: 'jwk' });
-
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    return res.status(200).json({
-      keys: [{
-        kty: jwk.kty,
+  return res.status(200).json({
+    keys: [
+      {
+        kty: 'RSA',
         use: 'sig',
         alg: 'RS256',
-        kid: KID,
-        n:   jwk.n,
-        e:   jwk.e,
-      }],
-    });
-  } catch (err) {
-    console.error('[jwks] Error:', err);
-    return res.status(500).json({ error: err.message });
-  }
+        kid: 'petition-rp-2026',
+        n: '1SgdJtogcpNZbRRKk-Z4vQulybZ3whEqS-cRHedxPDg5_5X63jLOOFDlc9cuvPU15euvCBdhOt-PlS4tM49Y09M14C0Do8WFcNAn09nuoU0A4ARRy_6Z9n0likVsFR9KoK34WK7jHOzxQJM0fDEYuSN7HOFzXRnRYgzJH-gqkIHyTPT07-dFflnT7CKqw3Ahrc16Qr9fMp7SMtqSnmYEqR1yZZITbaUHRGT9mMzSqzTgJLHW4lFfnyN2hAQToF0Wej6iQx9y4Tff1_DdXcgH7EZFXvpxUBa58mGcC0EJNCgfzEyqufAkalycZlKEP6g3FZD-_pw_JIcOOv0GCzL9wQ',
+        e: 'AQAB'
+      }
+    ]
+  });
 }
