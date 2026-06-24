@@ -1,6 +1,13 @@
 // POST /api/interac-exchange
 // Called by frontend after Interac redirects to /callback.
-// Enforces: one vote per Canadian, zero duplicates across all methods and ID types.
+// Enforces one vote per Canadian across every verification path:
+//   - same Interac sub (same-method replay)
+//   - same legal identity (name + birthdate) across IVS and IDVS
+//   - same identity under name-normalisation drift (middle names, accents,
+//     hyphens, apostrophes) via a looser strict-form hash
+//   - same physical document re-scanned in a new IDVS session
+// All four checks plus the insert run inside the record_signature RPC so
+// there is no TOCTOU window between SELECT and INSERT.
 
 import { createClient }   from '@supabase/supabase-js';
 import { SignJWT, importPKCS8 } from 'jose';
@@ -13,7 +20,6 @@ const CLIENT_ID         = '12011230-9c6c-42e3-9834-1bf2d8ee2a91';
 const KID               = 'petition-rp-2026';
 const REDIRECT_URI      = 'https://canada-petition.vercel.app/callback';
 
-// Document types accepted by Interac IDVS — health card is NOT supported by Interac
 const ACCEPTED_DOC_TYPES = new Set([
   'passport', 'drivers_license', 'national_card',
   'resident_permit', 'indigenous_card',
@@ -25,26 +31,64 @@ function loadKey() {
   return Buffer.from(b64, 'base64').toString('utf8');
 }
 
-// Hash 1 — blocks same-session / same-method repeat votes
-// IVS:  sub is a stable pairwise ID → reliably catches bank re-votes
-// IDVS: sub is a per-session job_id → catches same session only
-function hashSub(sub) {
+function hmac(value) {
   const salt = process.env.HASH_SALT;
   if (!salt) throw new Error('HASH_SALT not set');
-  return crypto.createHmac('sha256', salt).update(sub).digest('hex');
+  return crypto.createHmac('sha256', salt).update(value).digest('hex');
 }
 
-// Hash 2 — blocks cross-method duplicate votes
-// given_name + family_name + birthdate are stable across IVS and IDVS
-// for the same real person. This is what stops bank→ID and ID→bank gaming.
-function hashIdentity(givenName, familyName, birthdate) {
-  const salt = process.env.HASH_SALT;
-  if (!salt) throw new Error('HASH_SALT not set');
-  const norm = s => (s || '').toUpperCase().replace(/\s+/g, ' ').trim();
-  return crypto
-    .createHmac('sha256', salt)
-    .update(`${norm(givenName)}|${norm(familyName)}|${(birthdate || '').trim()}`)
-    .digest('hex');
+// Aggressive name normalisation. Survives:
+//   - accents and diacritics (ZoÃ© â†’ ZOE)
+//   - hyphens, apostrophes, spaces (St-Pierre, O'Brien â†’ STPIERRE, OBRIEN)
+//   - case and trailing whitespace
+function normaliseName(s) {
+  return (s ?? '')
+    .normalize('NFD')
+    .replace(/[Ì€-Í¯]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase();
+}
+
+// Birthdate from Interac is ISO 8601 (YYYY-MM-DD). Trim only.
+function normaliseBirthdate(s) {
+  return (s ?? '').trim();
+}
+
+// Document number: strip whitespace and punctuation, uppercase.
+// Catches whitespace/hyphen differences between scans of the same ID.
+function normaliseDocNumber(s) {
+  return (s ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+// Strict-form identity hash. Designed so the same person produces the
+// same hash even when their IDs disagree on middle names, accents, etc.
+//   familyName (fully normalised) | birthdate | first letter of given name
+// First letter is enough to disambiguate siblings sharing a birthdate
+// without being fooled by middle-name presence/absence.
+function buildIdentityHashes(givenName, familyName, birthdate) {
+  const g  = normaliseName(givenName);
+  const f  = normaliseName(familyName);
+  const bd = normaliseBirthdate(birthdate);
+
+  if (!g || !f || !bd) return { strictExact: null, strictLoose: null };
+
+  const strictExact = hmac(`${g}|${f}|${bd}`);
+  const strictLoose = hmac(`${f}|${bd}|${g.charAt(0)}`);
+  return { strictExact, strictLoose };
+}
+
+// Interac userinfo can expose the document number under several names
+// depending on the doc type. Try all of them.
+function extractDocNumber(claims) {
+  return (
+    claims.document_number ||
+    claims.doc_number       ||
+    claims.id_number        ||
+    claims.passport_number  ||
+    claims.licence_number   ||
+    claims.license_number   ||
+    null
+  );
 }
 
 export default async function handler(req, res) {
@@ -61,10 +105,9 @@ export default async function handler(req, res) {
 
     const supabase = createClient(
       process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY   // bypasses RLS — only Vercel can write
+      process.env.SUPABASE_SERVICE_KEY
     );
 
-    // ── 1. Validate state — one-time use ────────────────────────
     const { data: sessions, error: fetchErr } = await supabase
       .from('pending_sessions')
       .select('province, code_verifier')
@@ -78,11 +121,8 @@ export default async function handler(req, res) {
       });
 
     const { province, code_verifier } = sessions[0];
-
-    // Delete immediately — one-time use, prevents replay attacks
     await supabase.from('pending_sessions').delete().eq('state', state);
 
-    // ── 2. Build client_assertion JWT for token endpoint ────────
     const pem        = loadKey();
     const privateKey = await importPKCS8(pem, 'RS256');
     const now        = Math.floor(Date.now() / 1000);
@@ -96,7 +136,6 @@ export default async function handler(req, res) {
       .setProtectedHeader({ alg: 'RS256', kid: KID })
       .sign(privateKey);
 
-    // ── 3. Exchange auth code → access token ────────────────────
     const tokenRes = await fetch(TOKEN_ENDPOINT, {
       method:  'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -119,7 +158,6 @@ export default async function handler(req, res) {
 
     const { access_token } = await tokenRes.json();
 
-    // ── 4. Fetch verified identity claims from Interac ───────────
     const userinfoRes = await fetch(USERINFO_ENDPOINT, {
       headers: { Authorization: `Bearer ${access_token}` },
     });
@@ -131,34 +169,20 @@ export default async function handler(req, res) {
     }
 
     const claims = await userinfoRes.json();
-    const {
-      sub,
-      given_name,
-      family_name,
-      birthdate,
-      doc_type,
-      scan_result,
-    } = claims;
+    const { sub, given_name, family_name, birthdate, doc_type, scan_result } = claims;
 
     if (!sub)
       return res.status(400).json({ error: 'No identity returned from Interac' });
 
-    // ── 5. IDVS-specific validation ──────────────────────────────
-    // doc_type present = document scan (IDVS) flow was used
     const isIDVS = Boolean(doc_type);
 
     if (isIDVS) {
-      // Reject unrecognised document types
       if (!ACCEPTED_DOC_TYPES.has(doc_type)) {
         return res.status(400).json({
           error: 'unsupported_document',
           message: `Document type "${doc_type}" is not accepted. Please use a passport, driver's licence, provincial ID, permanent resident card, or Indian status card.`,
         });
       }
-
-      // Reject anything other than a CLEAR scan.
-      // SUSPECTED = signs of tampering. REJECTED = couldn't process.
-      // The DB constraint also enforces this as a second layer.
       if (scan_result && scan_result !== 'CLEAR') {
         return res.status(400).json({
           error: 'document_not_verified',
@@ -168,89 +192,65 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── 6. Build deduplication hashes ────────────────────────────
-    const voterHashSub = hashSub(sub);
+    const voterHashSub = hmac(sub);
+    const { strictExact, strictLoose } =
+      buildIdentityHashes(given_name, family_name, birthdate);
 
-    // Identity hash — requires name + birthdate.
-    // Both IVS and IDVS return these; the same person always produces
-    // the same hash regardless of which method they used.
-    const hasIdentity = given_name && family_name && birthdate;
-    const voterHashIdentity = hasIdentity
-      ? hashIdentity(given_name, family_name, birthdate)
+    const docNumber = isIDVS ? extractDocNumber(claims) : null;
+    const voterHashDoc = (isIDVS && docNumber)
+      ? hmac(`${doc_type}|${normaliseDocNumber(docNumber)}`)
       : null;
 
-    // For IDVS, identity hash is critical because sub changes each session.
-    // Log a warning if it's unexpectedly missing.
-    if (isIDVS && !voterHashIdentity) {
-      console.warn('[exchange] IDVS vote missing identity fields — sub-only dedup only', {
-        doc_type, has_given_name: !!given_name,
-        has_family_name: !!family_name, has_birthdate: !!birthdate,
+    if (isIDVS && !strictExact) {
+      console.warn('[exchange] IDVS vote missing identity fields â€” degraded dedup', {
+        doc_type,
+        has_given_name: !!given_name,
+        has_family_name: !!family_name,
+        has_birthdate:  !!birthdate,
       });
     }
 
-    // ── 7. Check voter_hash (sub) — same-method duplicate ────────
-    const { data: existingSub } = await supabase
-      .from('signatures')
-      .select('id')
-      .eq('voter_hash', voterHashSub)
-      .limit(1);
-
-    if (existingSub?.length)
-      return res.status(409).json({
-        error: 'already_voted',
-        message: 'You have already signed this petition.',
+    const { data: rpcRows, error: rpcErr } = await supabase
+      .rpc('record_signature', {
+        p_voter_hash:                 voterHashSub,
+        p_voter_hash_identity:        strictExact,
+        p_voter_hash_identity_strict: strictLoose,
+        p_voter_hash_doc:             voterHashDoc,
+        p_verification_method:        isIDVS ? 'IDVS' : 'IVS',
+        p_doc_type:                   doc_type ?? null,
+        p_scan_result:                isIDVS ? (scan_result ?? 'CLEAR') : null,
+        p_province:                   province,
       });
 
-    // ── 8. Check voter_hash_identity — cross-method duplicate ────
-    // This catches: bank vote then ID scan, or ID scan then bank vote,
-    // or scanning a different ID type (passport after licence, etc.)
-    if (voterHashIdentity) {
-      const { data: existingIdentity } = await supabase
-        .from('signatures')
-        .select('id, verification_method')
-        .eq('voter_hash_identity', voterHashIdentity)
-        .limit(1);
-
-      if (existingIdentity?.length) {
-        const prior = existingIdentity[0].verification_method;
-        return res.status(409).json({
-          error: 'already_voted',
-          message: `Your identity has already been used to sign this petition${prior ? ` (via ${prior})` : ''}.`,
-        });
-      }
-    }
-
-    // ── 9. Insert — DB constraints are the final safety net ──────
-    // Even if two requests race past checks 7 & 8 simultaneously,
-    // the UNIQUE constraints on voter_hash and voter_hash_identity
-    // ensure only one INSERT commits. The other gets error 23505.
-    const { error: insertError } = await supabase
-      .from('signatures')
-      .insert({
-        voter_hash:          voterHashSub,
-        voter_hash_identity: voterHashIdentity,
-        verification_method: isIDVS ? 'IDVS' : 'IVS',
-        doc_type:            doc_type ?? null,
-        scan_result:         isIDVS ? (scan_result ?? 'CLEAR') : null,
-        province,
-      });
-
-    if (insertError) {
-      if (insertError.code === '23505')  // unique_violation
-        return res.status(409).json({
-          error: 'already_voted',
-          message: 'Your identity has already been used to sign this petition.',
-        });
-      if (insertError.code === '23514')  // check_violation (scan_result must be CLEAR)
-        return res.status(400).json({
-          error: 'document_not_verified',
-          message: 'Only CLEAR document scans are accepted.',
-        });
-      console.error('[exchange] Insert error:', insertError);
+    if (rpcErr) {
+      console.error('[exchange] RPC error:', rpcErr);
       return res.status(500).json({ error: 'Could not record vote' });
     }
 
-    // vote_counts table updated automatically by DB trigger
+    const result = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+
+    if (result?.status === 'duplicate') {
+      const prior = result.duplicate_of && result.duplicate_of !== 'unknown'
+        ? ` (via ${result.duplicate_of})`
+        : '';
+      return res.status(409).json({
+        error: 'already_voted',
+        message: `Your identity has already been used to sign this petition${prior}.`,
+      });
+    }
+
+    if (result?.status === 'invalid_scan') {
+      return res.status(400).json({
+        error: 'document_not_verified',
+        message: 'Only CLEAR document scans are accepted.',
+      });
+    }
+
+    if (result?.status !== 'ok') {
+      console.error('[exchange] Unexpected RPC status:', result);
+      return res.status(500).json({ error: 'Could not record vote' });
+    }
+
     return res.status(200).json({
       success: true,
       province,
